@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.local
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log

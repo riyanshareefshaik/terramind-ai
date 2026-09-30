@@ -1,0 +1,15 @@
+{
+  "name": "terramind-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "TerraMind AI — urban digital-twin platform",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "build:web": "npm run build --workspace apps/web",
+    "lint:web": "npm run lint --workspace apps/web",
+    "preview:web": "npm run preview --workspace apps/web"
+  }
+}
