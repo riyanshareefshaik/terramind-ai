@@ -1,19 +1,19 @@
-import { useId, useMemo, useState, type KeyboardEvent } from 'react'
-import type { TwinEntity } from '../../types/twin'
-import { humanize } from '../../utils/format'
-import { Icon } from '../common/Icon'
+import { useCallback, useId, useMemo, useState, type KeyboardEvent } from 'react'
+import { useDebounced } from '../hooks/useDebounced'
+import { useResource } from '../hooks/useResource'
+import { api } from '../services/api'
+import type { Place } from '../types/api'
+import { Icon } from './common/Icon'
 
 interface SearchBoxProps {
-  entities: TwinEntity[]
-  onSelectEntity: (entityId: string) => void
-  onFlyToLocation: (latitude: number, longitude: number) => void
+  onPlace: (place: Place) => void
+  onCoordinates: (latitude: number, longitude: number) => void
 }
 
 type Result =
-  | { kind: 'entity'; key: string; entity: TwinEntity }
+  | { kind: 'place'; key: string; place: Place }
   | { kind: 'coordinates'; key: string; latitude: number; longitude: number }
 
-const MAX_RESULTS = 8
 const COORDINATES = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/
 
 function parseCoordinates(text: string): { latitude: number; longitude: number } | null {
@@ -21,40 +21,35 @@ function parseCoordinates(text: string): { latitude: number; longitude: number }
   if (!match) return null
   const latitude = Number(match[1])
   const longitude = Number(match[2])
-  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null
-  return { latitude, longitude }
+  return Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180 ? { latitude, longitude } : null
 }
 
-export function SearchBox({ entities, onSelectEntity, onFlyToLocation }: SearchBoxProps) {
+export function SearchBox({ onPlace, onCoordinates }: SearchBoxProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
   const listId = useId()
+  const debounced = useDebounced(query.trim(), 350)
+  const coords = parseCoordinates(debounced)
+
+  const fetcher = useCallback(
+    (signal: AbortSignal) => api.searchPlaces(debounced, signal),
+    [debounced],
+  )
+  const search = useResource(debounced.length >= 3 && !coords ? fetcher : null)
 
   const results = useMemo<Result[]>(() => {
-    const text = query.trim().toLowerCase()
-    if (!text) return []
-    const coords = parseCoordinates(text)
-    const found: Result[] = coords ? [{ kind: 'coordinates', key: 'coords', ...coords }] : []
-    for (const entity of entities) {
-      if (found.length >= MAX_RESULTS) break
-      if (
-        entity.name.toLowerCase().includes(text) ||
-        entity.id.toLowerCase().includes(text) ||
-        entity.type.replace('_', ' ').includes(text)
-      ) {
-        found.push({ kind: 'entity', key: entity.id, entity })
-      }
-    }
-    return found
-  }, [entities, query])
+    if (coords) return [{ kind: 'coordinates', key: 'coords', ...coords }]
+    if (debounced.length < 3 || !search.data) return []
+    return search.data.map((place) => ({ kind: 'place', key: place.id, place }))
+  }, [coords, debounced, search.data])
 
   const choose = (result: Result) => {
-    if (result.kind === 'entity') {
-      onSelectEntity(result.entity.id)
-      setQuery(result.entity.name)
+    if (result.kind === 'place') {
+      onPlace(result.place)
+      setQuery(result.place.name)
     } else {
-      onFlyToLocation(result.latitude, result.longitude)
+      onCoordinates(result.latitude, result.longitude)
     }
     setOpen(false)
   }
@@ -75,7 +70,8 @@ export function SearchBox({ entities, onSelectEntity, onFlyToLocation }: SearchB
     }
   }
 
-  const showList = open && query.trim().length > 0
+  const typing = query.trim() !== debounced || search.loading
+  const showList = open && query.trim().length >= 3
 
   return (
     <div className="search">
@@ -86,8 +82,8 @@ export function SearchBox({ entities, onSelectEntity, onFlyToLocation }: SearchB
         aria-expanded={showList}
         aria-controls={listId}
         aria-activedescendant={showList && results[active] ? `${listId}-${active}` : undefined}
-        aria-label="Search entities or enter coordinates"
-        placeholder="Search buildings, sensors, roads… or “17.38, 78.48”"
+        aria-label="Search any place in India"
+        placeholder="Search any city, area, street or landmark in India"
         value={query}
         onChange={(event) => {
           setQuery(event.target.value)
@@ -100,7 +96,11 @@ export function SearchBox({ entities, onSelectEntity, onFlyToLocation }: SearchB
       />
       {showList && (
         <ul className="search__results" id={listId} role="listbox">
-          {results.length === 0 && <li className="search__empty">No matching entities</li>}
+          {results.length === 0 && (
+            <li className="search__empty">
+              {typing ? 'Searching…' : search.error ? search.error.message : 'No places found'}
+            </li>
+          )}
           {results.map((result, index) => (
             <li
               key={result.key}
@@ -108,27 +108,25 @@ export function SearchBox({ entities, onSelectEntity, onFlyToLocation }: SearchB
               role="option"
               aria-selected={index === active}
               className={index === active ? 'is-active' : ''}
-              // mousedown fires before the input's blur closes the list
               onMouseDown={(event) => {
-                event.preventDefault()
+                event.preventDefault() // fires before the input's blur closes the list
                 choose(result)
               }}
               onMouseEnter={() => setActive(index)}
             >
-              {result.kind === 'entity' ? (
-                <>
-                  <span>{result.entity.name}</span>
-                  <small>
-                    {humanize(result.entity.type)} · {result.entity.id}
-                  </small>
-                </>
+              <Icon name="pin" size={15} />
+              {result.kind === 'place' ? (
+                <span>
+                  <strong>{result.place.name}</strong>
+                  <small>{[result.place.context, result.place.kind].filter(Boolean).join(' · ')}</small>
+                </span>
               ) : (
-                <>
-                  <span>Fly to coordinates</span>
+                <span>
+                  <strong>Go to coordinates</strong>
                   <small>
                     {result.latitude.toFixed(5)}, {result.longitude.toFixed(5)}
                   </small>
-                </>
+                </span>
               )}
             </li>
           ))}

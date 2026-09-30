@@ -1,31 +1,25 @@
 :root {
-  --bg: #040a07;
-  --surface: #0a1410;
-  --surface-2: #0f1c16;
-  --surface-3: #15261e;
-  --border: #1b2e25;
-  --border-strong: #274436;
-  --text: #e2eee8;
-  --text-dim: #b3c7bd;
-  --muted: #7f998c;
-  --accent: #3ddc97;
-  --accent-strong: #5ff0ae;
-  --accent-soft: rgba(61, 220, 151, 0.12);
+  --bg: #0b0d10;
+  --panel: #111418;
+  --panel-raised: #171b21;
+  --panel-hover: #1d222a;
+  --border: #242a33;
+  --border-strong: #313843;
+  --text: #e8ebef;
+  --text-2: #b4bcc7;
+  --muted: #818b98;
+  --accent: #4c8dff;
+  --accent-soft: rgba(76, 141, 255, 0.14);
+  --series-1: #3987e5;
   --danger: #e5484d;
-  --warning: #f5b942;
-  --info: #60a5fa;
+  --warning: #e39b2d;
+  --info: #6e9ceb;
 
-  --prov-live: #3ddc97;
-  --prov-simulated: #f5b942;
-  --prov-estimated: #60a5fa;
-  --prov-historical: #c084fc;
-  --prov-unavailable: #8b949e;
-
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
 
   color-scheme: dark;
   font-family: var(--font);
@@ -34,6 +28,7 @@
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv11', 'ss01';
 }
 
 *,
@@ -46,13 +41,11 @@ html,
 body,
 #root {
   margin: 0;
-  min-height: 100%;
+  height: 100%;
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 20% -10%, rgba(61, 220, 151, 0.07), transparent 60%),
-    var(--bg);
+  background: var(--bg);
 }
 
 h1,
@@ -67,9 +60,13 @@ button {
   color: inherit;
 }
 
-code {
-  font-family: var(--mono);
-  font-size: 0.92em;
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 :focus-visible {
@@ -79,7 +76,6 @@ code {
 
 ::-webkit-scrollbar {
   width: 8px;
-  height: 8px;
 }
 
 ::-webkit-scrollbar-thumb {

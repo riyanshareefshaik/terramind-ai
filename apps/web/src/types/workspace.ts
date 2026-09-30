@@ -1,28 +1,53 @@
-export type BaseLayerId = 'imagery' | 'terrain' | 'osm-buildings'
-export type BaseLayerStatus = 'loading' | 'ready' | 'unavailable' | 'error'
+import type { BuildingFeature, PlaceFeature } from './api'
+import type { Place } from './api'
 
-export interface BaseLayerState {
-  id: BaseLayerId
-  name: string
-  source: string
-  status: BaseLayerStatus
-  message: string | null
+export type BasemapId = 'satellite' | 'streets' | 'dark'
+export type BuildingColorMode = 'natural' | 'height' | 'use'
+
+export interface LayerSettings {
+  basemap: BasemapId
+  terrain: boolean
+  buildings: boolean
+  places: boolean
+  colorMode: BuildingColorMode
 }
-
-export type BuildingColorMode = 'risk' | 'height' | 'use'
 
 export interface CameraState {
   latitude: number
   longitude: number
-  /** Metres above the WGS84 ellipsoid. */
+  /** Metres above the ellipsoid. */
   height: number
   headingDeg: number
   pitchDeg: number
 }
 
-/** Imperative API the 3D workspace exposes to the rest of the app. */
-export interface WorkspaceHandle {
-  flyToEntity: (entityId: string) => void
+/** What the camera is looking at, used to fetch area weather and names. */
+export interface ViewFocus {
+  latitude: number
+  longitude: number
+  /** Distance from camera to the focus point, metres. */
+  range: number
+}
+
+export interface TileStats {
+  tiles: number
+  loading: number
+  failed: number
+  buildings: number
+  places: number
+  /** True when the camera is too far out to stream buildings. */
+  tooFar: boolean
+}
+
+export type Selection =
+  | { kind: 'building'; feature: BuildingFeature; groundElevation: number | null }
+  | { kind: 'place'; feature: PlaceFeature; groundElevation: number | null }
+
+/** Imperative API the map exposes to the rest of the app. */
+export interface MapHandle {
+  flyToPlace: (place: Place) => void
   flyToLocation: (latitude: number, longitude: number) => void
+  flyToSelection: () => void
   flyHome: () => void
+  clearSelection: () => void
 }

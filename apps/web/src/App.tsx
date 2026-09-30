@@ -1,167 +1,168 @@
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import { StateMessage } from './components/common/StateMessage'
-import { AppHeader } from './components/header/AppHeader'
-import { SearchBox } from './components/header/SearchBox'
-import { AlertsPanel } from './components/panels/AlertsPanel'
-import { AnalyticsPanel } from './components/panels/AnalyticsPanel'
-import { EntityInspector } from './components/panels/EntityInspector'
-import { LayerManager } from './components/panels/LayerManager'
-import { WeatherPanel } from './components/panels/WeatherPanel'
+import { SearchBox } from './components/SearchBox'
+import { AlertsTab } from './components/sidebar/AlertsTab'
+import { DetailsTab } from './components/sidebar/DetailsTab'
+import { LayersTab } from './components/sidebar/LayersTab'
+import { OverviewTab } from './components/sidebar/OverviewTab'
+import { TopBar } from './components/TopBar'
 import { config } from './config/env'
 import { useResource } from './hooks/useResource'
-import { api } from './services/api'
-import type { TwinEntity } from './types/twin'
-import type { BaseLayerState, BuildingColorMode, WorkspaceHandle } from './types/workspace'
+import { api, type LatLon } from './services/api'
+import type { LayerSettings, MapHandle, Selection, ViewFocus } from './types/workspace'
 
 // CesiumJS is several megabytes; load it in its own chunk so the shell renders first.
-const CesiumWorkspace = lazy(() => import('./components/workspace/CesiumWorkspace'))
+const MapView = lazy(() => import('./components/map/MapView'))
 
-type InsightTab = 'inspect' | 'alerts' | 'analytics'
+type Tab = 'overview' | 'layers' | 'details' | 'alerts'
 
 const WEATHER_REFRESH_MS = 10 * 60 * 1000
 const HEALTH_REFRESH_MS = 30 * 1000
-const NO_ENTITIES: TwinEntity[] = []
+/** Refresh area weather and name once the view moves this far. */
+const REFOCUS_DISTANCE_M = 2_000
+const LAYERS_KEY = 'terramind.layers'
 
-async function fetchTwin(signal: AbortSignal) {
-  const [layers, entities] = await Promise.all([api.twinLayers(signal), api.twinEntities(signal)])
-  return { layers: layers.layers, entities: entities.entities }
+const DEFAULT_LAYERS: LayerSettings = {
+  basemap: 'satellite',
+  terrain: true,
+  buildings: true,
+  places: true,
+  colorMode: 'natural',
+}
+
+function loadLayers(): LayerSettings {
+  try {
+    const saved = window.localStorage.getItem(LAYERS_KEY)
+    return saved ? { ...DEFAULT_LAYERS, ...(JSON.parse(saved) as Partial<LayerSettings>) } : DEFAULT_LAYERS
+  } catch {
+    return DEFAULT_LAYERS
+  }
+}
+
+function metresBetween(a: LatLon, b: LatLon): number {
+  const rad = Math.PI / 180
+  const dLat = (b.latitude - a.latitude) * rad
+  const dLon = (b.longitude - a.longitude) * rad
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLon / 2) ** 2
+  return 2 * 6_371_000 * Math.asin(Math.sqrt(h))
 }
 
 export default function App() {
+  const map = useRef<MapHandle>(null)
+  const [layers, setLayers] = useState<LayerSettings>(loadLayers)
+  const [focus, setFocus] = useState<LatLon>({ latitude: config.home.latitude, longitude: config.home.longitude })
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const [tab, setTab] = useState<Tab>('overview')
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LAYERS_KEY, JSON.stringify(layers))
+    } catch {
+      // Storage unavailable (private mode); settings just won't persist.
+    }
+  }, [layers])
+
   const health = useResource(api.health, HEALTH_REFRESH_MS)
-  const weather = useResource(api.weather, WEATHER_REFRESH_MS)
-  const twin = useResource(fetchTwin)
-  const alerts = useResource(api.alerts)
-  const analytics = useResource(api.analytics)
-
-  const workspace = useRef<WorkspaceHandle>(null)
-  const [baseLayers, setBaseLayers] = useState<BaseLayerState[]>([])
-  const [overrides, setOverrides] = useState<Record<string, boolean>>({})
-  const [colorMode, setColorMode] = useState<BuildingColorMode>('risk')
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tab, setTab] = useState<InsightTab>('inspect')
-
-  const entities = twin.data?.entities ?? NO_ENTITIES
-  const twinLayers = twin.data?.layers ?? null
-  const entityById = useMemo(() => new Map(entities.map((e) => [e.id, e])), [entities])
-  const selected = selectedId ? (entityById.get(selectedId) ?? null) : null
-
-  // Layer defaults come from the providers; the user's toggles override them.
-  const visibility = useMemo(() => {
-    const defaults: Record<string, boolean> = {}
-    for (const layer of baseLayers) defaults[layer.id] = true
-    for (const layer of twinLayers ?? []) defaults[layer.id] = layer.available && layer.default_visible
-    return { ...defaults, ...overrides }
-  }, [baseLayers, twinLayers, overrides])
-
-  const simulatedLayersVisible = (twinLayers ?? []).some(
-    (layer) => layer.provenance === 'SIMULATED' && visibility[layer.id],
+  const weather = useResource(
+    useCallback((signal: AbortSignal) => api.weather(focus, signal), [focus]),
+    WEATHER_REFRESH_MS,
   )
+  const air = useResource(
+    useCallback((signal: AbortSignal) => api.airQuality(focus, signal), [focus]),
+    WEATHER_REFRESH_MS,
+  )
+  const alerts = useResource(
+    useCallback((signal: AbortSignal) => api.alerts(focus, signal), [focus]),
+    WEATHER_REFRESH_MS,
+  )
+  const area = useResource(useCallback((signal: AbortSignal) => api.areaName(focus, signal), [focus]))
 
-  const toggleLayer = useCallback((layerId: string, visible: boolean) => {
-    setOverrides((current) => ({ ...current, [layerId]: visible }))
+  const handleViewChange = useCallback((view: ViewFocus) => {
+    // Only follow the view at city scale; from orbit the "centre" means little.
+    if (view.range > 60_000) return
+    setFocus((current) =>
+      metresBetween(current, view) > REFOCUS_DISTANCE_M
+        ? { latitude: Number(view.latitude.toFixed(4)), longitude: Number(view.longitude.toFixed(4)) }
+        : current,
+    )
   }, [])
 
-  const handleSceneSelect = useCallback((id: string | null) => {
-    setSelectedId(id)
-    if (id) setTab('inspect')
+  const handleSelect = useCallback((next: Selection | null) => {
+    setSelection(next)
+    if (next) setTab('details')
   }, [])
 
-  /** Select from outside the 3D view: make its layer visible, then fly to it. */
-  const focusEntity = useCallback(
-    (id: string) => {
-      const entity = entityById.get(id)
-      if (!entity) return
-      setOverrides((current) => ({ ...current, [entity.layer_id]: true }))
-      setSelectedId(id)
-      setTab('inspect')
-      // Wait a frame so the layer's visibility change has reached the scene.
-      requestAnimationFrame(() => workspace.current?.flyToEntity(id))
-    },
-    [entityById],
-  )
+  const updateLayers = useCallback((patch: Partial<LayerSettings>) => {
+    setLayers((current) => ({ ...current, ...patch }))
+  }, [])
 
-  const apiStatus = health.data ? 'online' : health.error ? 'offline' : 'checking'
-  const alertCount = alerts.data?.alerts.filter((a) => a.severity !== 'info').length ?? 0
+  const placeName = area.data?.name ?? area.data?.city ?? (area.loading ? '…' : config.home.name)
+  const alertCount = alerts.data?.alerts.length ?? 0
+  const offline = health.error !== null && health.data === null
 
   return (
     <div className="app">
-      <AppHeader
-        locationName={config.home.name}
-        apiStatus={apiStatus}
-        ionConfigured={config.cesiumIonToken !== null}
+      <TopBar
         search={
           <SearchBox
-            entities={entities}
-            onSelectEntity={focusEntity}
-            onFlyToLocation={(lat, lon) => workspace.current?.flyToLocation(lat, lon)}
+            onPlace={(place) => map.current?.flyToPlace(place)}
+            onCoordinates={(lat, lon) => map.current?.flyToLocation(lat, lon)}
           />
         }
+        placeName={placeName}
+        weather={weather.data}
+        air={air.data}
+        offline={offline}
       />
 
       <main className="layout">
-        <aside className="sidebar sidebar--left">
-          <LayerManager
-            baseLayers={baseLayers}
-            twinLayers={twinLayers}
-            twinError={twin.error}
-            twinLoading={twin.loading}
-            onRetry={twin.reload}
-            visibility={visibility}
-            onToggle={toggleLayer}
-            colorMode={colorMode}
-            onColorModeChange={setColorMode}
-          />
-          <WeatherPanel weather={weather} />
+        <aside className="sidebar" aria-label="Area information">
+          <div className="tabs" role="tablist">
+            {(
+              [
+                ['overview', 'Overview'],
+                ['layers', 'Layers'],
+                ['details', 'Details'],
+                ['alerts', 'Alerts'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={tab === id}
+                className={tab === id ? 'is-active' : ''}
+                onClick={() => setTab(id)}
+              >
+                {label}
+                {id === 'alerts' && alertCount > 0 && <span className="tabs__count">{alertCount}</span>}
+              </button>
+            ))}
+          </div>
+          <div className="sidebar__body" role="tabpanel">
+            {tab === 'overview' && <OverviewTab area={area.data} weather={weather} air={air} />}
+            {tab === 'layers' && <LayersTab layers={layers} onChange={updateLayers} />}
+            {tab === 'details' && (
+              <DetailsTab
+                selection={selection}
+                onFlyTo={() => map.current?.flyToSelection()}
+                onClear={() => map.current?.clearSelection()}
+              />
+            )}
+            {tab === 'alerts' && (
+              <AlertsTab alerts={alerts} placeName={placeName} timeZone={weather.data?.location.timezone ?? null} />
+            )}
+          </div>
         </aside>
 
-        <section className="stage" aria-label="3D city workspace">
-          <Suspense fallback={<StateMessage kind="loading">Loading 3D engine…</StateMessage>}>
-            <CesiumWorkspace
-              ref={workspace}
-              entities={entities}
-              visibility={visibility}
-              colorMode={colorMode}
-              selectedId={selectedId}
-              simulatedLayersVisible={simulatedLayersVisible}
-              onSelect={handleSceneSelect}
-              onBaseLayersChange={setBaseLayers}
-            />
+        <section className="stage" aria-label="3D map">
+          <Suspense fallback={<StateMessage kind="loading">Loading 3D map…</StateMessage>}>
+            <MapView ref={map} layers={layers} onSelect={handleSelect} onViewChange={handleViewChange} />
           </Suspense>
         </section>
-
-        <aside className="sidebar sidebar--right">
-          <section className="panel insights">
-            <div className="tabs" role="tablist" aria-label="Insights">
-              {(['inspect', 'alerts', 'analytics'] as const).map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === id}
-                  className={tab === id ? 'is-active' : ''}
-                  onClick={() => setTab(id)}
-                >
-                  {id === 'inspect' ? 'Inspector' : id === 'alerts' ? 'Alerts' : 'Analytics'}
-                  {id === 'alerts' && alertCount > 0 && <span className="tabs__count">{alertCount}</span>}
-                </button>
-              ))}
-            </div>
-            <div className="panel__body" role="tabpanel">
-              {tab === 'inspect' && (
-                <EntityInspector
-                  entity={selected}
-                  layerName={twinLayers?.find((l) => l.id === selected?.layer_id)?.name ?? null}
-                  onFlyTo={(id) => workspace.current?.flyToEntity(id)}
-                  onClear={() => setSelectedId(null)}
-                />
-              )}
-              {tab === 'alerts' && <AlertsPanel alerts={alerts} onSelectEntity={focusEntity} />}
-              {tab === 'analytics' && <AnalyticsPanel analytics={analytics} />}
-            </div>
-          </section>
-        </aside>
       </main>
     </div>
   )

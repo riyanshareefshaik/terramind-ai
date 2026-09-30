@@ -1,20 +1,40 @@
-import type { AlertsResponse, AnalyticsResponse, EntitiesResponse, LayersResponse, TwinEntity } from '../types/twin'
-import type { WeatherResponse } from '../types/weather'
+import type {
+  AirQualityResponse,
+  AlertsResponse,
+  AreaName,
+  MapTile,
+  Place,
+  WeatherResponse,
+} from '../types/api'
 import { getJson } from './http'
+
+export interface LatLon {
+  latitude: number
+  longitude: number
+}
+
+const at = ({ latitude, longitude }: LatLon) =>
+  `latitude=${latitude.toFixed(4)}&longitude=${longitude.toFixed(4)}`
 
 export const api = {
   health: (signal?: AbortSignal) => getJson<{ status: string }>('/health', signal),
 
-  weather: (signal?: AbortSignal) => getJson<WeatherResponse>('/api/weather', signal),
+  weather: (point: LatLon, signal?: AbortSignal) =>
+    getJson<WeatherResponse>(`/api/weather?${at(point)}`, signal),
 
-  twinLayers: (signal?: AbortSignal) => getJson<LayersResponse>('/api/twin/layers', signal),
+  airQuality: (point: LatLon, signal?: AbortSignal) =>
+    getJson<AirQualityResponse>(`/api/air-quality?${at(point)}`, signal),
 
-  twinEntities: (signal?: AbortSignal) => getJson<EntitiesResponse>('/api/twin/entities', signal),
+  alerts: (point: LatLon, signal?: AbortSignal) =>
+    getJson<AlertsResponse>(`/api/alerts?${at(point)}`, signal),
 
-  twinEntity: (id: string, signal?: AbortSignal) =>
-    getJson<TwinEntity>(`/api/twin/entities/${encodeURIComponent(id)}`, signal),
+  searchPlaces: async (query: string, signal?: AbortSignal) =>
+    (await getJson<{ places: Place[] }>(`/api/places/search?q=${encodeURIComponent(query)}`, signal))
+      .places,
 
-  alerts: (signal?: AbortSignal) => getJson<AlertsResponse>('/api/alerts', signal),
+  areaName: (point: LatLon, signal?: AbortSignal) =>
+    getJson<AreaName>(`/api/places/reverse?${at(point)}`, signal),
 
-  analytics: (signal?: AbortSignal) => getJson<AnalyticsResponse>('/api/analytics', signal),
+  tile: (z: number, x: number, y: number, signal?: AbortSignal) =>
+    getJson<MapTile>(`/api/tiles/${z}/${x}/${y}`, signal),
 }

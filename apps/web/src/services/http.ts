@@ -31,7 +31,7 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new ApiError('TerraMind API is unreachable. Is the backend running on port 8000?', null)
+    throw new ApiError('Can’t reach the TerraMind server.', null)
   }
   if (!response.ok) {
     // The Vite dev proxy answers 502/504 with an empty body when the API is down.
@@ -39,7 +39,7 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
     throw new ApiError(
       detail ??
         (response.status >= 502
-          ? 'TerraMind API is unreachable. Is the backend running on port 8000?'
+          ? 'Can’t reach the TerraMind server.'
           : `Request failed (${response.status} ${response.statusText})`),
       response.status,
     )

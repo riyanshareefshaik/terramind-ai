@@ -10,42 +10,47 @@ export interface Resource<T> {
 interface Settled<T> {
   data: T | null
   error: Error | null
-  /** The request number this result belongs to. */
   request: number
+  fetcher: unknown
 }
 
 /**
- * Loads data with a fetcher, exposing loading/error state, manual reload and
- * optional polling. Stale data stays visible while a refresh is in flight.
- * The fetcher must be referentially stable (module-level or memoised).
+ * Loads data with a fetcher, exposing loading/error state, reload and polling.
+ * The previous result stays visible while a new fetcher (e.g. a new location)
+ * loads. The fetcher must be memoised: a new identity triggers a new fetch.
  */
 export function useResource<T>(
-  fetcher: (signal: AbortSignal) => Promise<T>,
+  fetcher: ((signal: AbortSignal) => Promise<T>) | null,
   refreshMs?: number,
 ): Resource<T> {
   const [request, setRequest] = useState(0)
-  const [settled, setSettled] = useState<Settled<T>>({ data: null, error: null, request: -1 })
-
+  const [settled, setSettled] = useState<Settled<T>>({ data: null, error: null, request: -1, fetcher: null })
   const reload = useCallback(() => setRequest((n) => n + 1), [])
 
   useEffect(() => {
+    if (!fetcher) return
     const controller = new AbortController()
     fetcher(controller.signal).then(
-      (data) => setSettled({ data, error: null, request }),
+      (data) => setSettled({ data, error: null, request, fetcher }),
       (err: unknown) => {
         if (controller.signal.aborted) return
         const error = err instanceof Error ? err : new Error(String(err))
-        setSettled((previous) => ({ data: previous.data, error, request }))
+        setSettled((previous) => ({ data: previous.data, error, request, fetcher }))
       },
     )
     return () => controller.abort()
   }, [fetcher, request])
 
   useEffect(() => {
-    if (!refreshMs) return
+    if (!refreshMs || !fetcher) return
     const timer = window.setInterval(reload, refreshMs)
     return () => window.clearInterval(timer)
-  }, [refreshMs, reload])
+  }, [refreshMs, reload, fetcher])
 
-  return { data: settled.data, error: settled.error, loading: settled.request !== request, reload }
+  return {
+    data: settled.data,
+    error: settled.error,
+    loading: fetcher !== null && (settled.request !== request || settled.fetcher !== fetcher),
+    reload,
+  }
 }
