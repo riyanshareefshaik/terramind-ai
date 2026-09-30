@@ -3,10 +3,8 @@ import {
   Cartesian3,
   Color,
   ColorGeometryInstanceAttribute,
-  DistanceDisplayCondition,
   GeometryInstance,
   LabelCollection,
-  LabelStyle,
   NearFarScalar,
   PerInstanceColorAppearance,
   PointPrimitiveCollection,
@@ -44,7 +42,8 @@ interface LoadedTile {
   data: MapTile
   primitive: Primitive | null
   points: PointPrimitiveCollection | null
-  labels: LabelCollection | null
+  /** Marker position of each place, for the name label. */
+  placePositions: Map<string, Cartesian3>
   /** Ground elevation per building id (min over its footprint). */
   ground: Map<string, number>
   lastWanted: number
@@ -116,6 +115,9 @@ export class BuildingTiles {
   private readonly fetchTile: FetchTile
   private readonly getElevation: () => Elevation
   private readonly onStats: (stats: TileStats) => void
+  /** One name label, shown for the hovered feature (or else the selected one). */
+  private readonly nameLabels = new LabelCollection()
+  private hoverId: string | null = null
 
   constructor(
     scene: Scene,
@@ -127,12 +129,26 @@ export class BuildingTiles {
     this.fetchTile = fetchTile
     this.getElevation = getElevation
     this.onStats = onStats
+    this.nameLabels.add({
+      position: Cartesian3.ZERO, // hidden until something is hovered or selected
+      show: false,
+      font: '500 13px Inter, system-ui, sans-serif',
+      fillColor: Color.WHITE,
+      showBackground: true,
+      backgroundColor: Color.fromCssColorString('#111418').withAlpha(0.92),
+      backgroundPadding: new Cartesian2(8, 5),
+      verticalOrigin: VerticalOrigin.BOTTOM,
+      pixelOffset: new Cartesian2(0, -14),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    })
+    scene.primitives.add(this.nameLabels)
   }
 
   destroy(): void {
     this.destroyed = true
     this.loading.forEach((controller) => controller.abort())
     for (const tile of this.tiles.values()) this.removeGraphics(tile)
+    if (!this.nameLabels.isDestroyed()) this.scene.primitives.remove(this.nameLabels)
     this.tiles.clear()
     this.features.clear()
   }
@@ -194,7 +210,7 @@ export class BuildingTiles {
         data,
         primitive: null,
         points: null,
-        labels: null,
+        placePositions: new Map(),
         ground: new Map(),
         lastWanted: Date.now(),
       }
@@ -282,46 +298,30 @@ export class BuildingTiles {
       this.scene.primitives.add(tile.primitive)
     }
 
+    tile.placePositions.clear()
     if (places.features.length) {
       tile.points = new PointPrimitiveCollection()
-      tile.labels = new LabelCollection()
       places.features.forEach((place, i) => {
         const [lon, lat] = place.geometry.coordinates
         const ground = tile.ground.get(place.id)
         const top = ground !== undefined ? ground + (this.features.get(place.id)?.building?.properties.height ?? 0) : heights[placeStart + i]
         const position = Cartesian3.fromDegrees(lon, lat, top + 4)
-        const color = Color.fromCssColorString(PLACE_COLORS[place.properties.category])
+        tile.placePositions.set(place.id, position)
         tile.points!.add({
           id: place.id,
           position,
-          color,
+          color: Color.fromCssColorString(PLACE_COLORS[place.properties.category]),
           pixelSize: 9,
           outlineColor: Color.fromCssColorString('#0b0d10'),
           outlineWidth: 2,
           scaleByDistance: new NearFarScalar(300, 1.2, 8000, 0.6),
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
         })
-        if (place.properties.name) {
-          tile.labels!.add({
-            id: place.id,
-            position,
-            text: place.properties.name,
-            font: '500 12px Inter, system-ui, sans-serif',
-            fillColor: Color.WHITE,
-            outlineColor: Color.fromCssColorString('#0b0d10'),
-            outlineWidth: 3,
-            style: LabelStyle.FILL_AND_OUTLINE,
-            verticalOrigin: VerticalOrigin.BOTTOM,
-            pixelOffset: new Cartesian2(0, -10),
-            distanceDisplayCondition: new DistanceDisplayCondition(0, 1400),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          })
-        }
       })
-      tile.points.show = tile.labels.show = this.placesVisible
+      tile.points.show = this.placesVisible
       this.scene.primitives.add(tile.points)
-      this.scene.primitives.add(tile.labels)
     }
+    this.refreshLabel()
     this.scene.requestRender()
     this.emitStats()
   }
@@ -365,10 +365,10 @@ export class BuildingTiles {
   }
 
   private removeGraphics(tile: LoadedTile): void {
-    for (const graphic of [tile.primitive, tile.points, tile.labels]) {
+    for (const graphic of [tile.primitive, tile.points]) {
       if (graphic && !graphic.isDestroyed()) this.scene.primitives.remove(graphic)
     }
-    tile.primitive = tile.points = tile.labels = null
+    tile.primitive = tile.points = null
   }
 
   /** Re-places every loaded building on a new terrain surface. */
@@ -385,8 +385,8 @@ export class BuildingTiles {
     for (const tile of this.tiles.values()) {
       if (tile.primitive) tile.primitive.show = buildings
       if (tile.points) tile.points.show = places
-      if (tile.labels) tile.labels.show = places
     }
+    this.refreshLabel()
     this.scene.requestRender()
   }
 
@@ -428,6 +428,39 @@ export class BuildingTiles {
     })
   }
 
+  setHover(id: string | null): void {
+    if (id === this.hoverId) return
+    this.hoverId = id
+    this.refreshLabel()
+    this.scene.requestRender()
+  }
+
+  private refreshLabel(): void {
+    const label = this.nameLabels.get(0)
+    const id = this.hoverId ?? this.selectedId
+    const ref = id ? this.features.get(id) : undefined
+    const name = ref?.place?.properties.name ?? ref?.building?.properties.name
+    const position = ref ? this.labelPosition(ref) : undefined
+    label.show = Boolean(name && position && (ref?.building ? this.buildingsVisible : this.placesVisible))
+    if (label.show) {
+      label.text = name!
+      label.position = position!
+    }
+  }
+
+  private labelPosition(ref: FeatureRef): Cartesian3 | undefined {
+    const tile = this.tiles.get(ref.tileKey)
+    if (!tile) return undefined
+    const id = (ref.place ?? ref.building)!.id
+    const marker = tile.placePositions.get(id)
+    if (marker) return marker
+    if (!ref.building) return undefined
+    const ring = ref.building.geometry.coordinates[0][0]
+    const lon = ring.reduce((sum, p) => sum + p[0], 0) / ring.length
+    const lat = ring.reduce((sum, p) => sum + p[1], 0) / ring.length
+    return Cartesian3.fromDegrees(lon, lat, (tile.ground.get(id) ?? 0) + ref.building.properties.height + 2)
+  }
+
   /** Resolves a scene pick result to a feature id we manage. */
   resolvePick(picked: unknown): string | null {
     if (!picked || typeof picked !== 'object' || !('id' in picked)) return null
@@ -443,6 +476,7 @@ export class BuildingTiles {
     if (previous) this.paint(previous)
     const ref = id ? this.features.get(id) : undefined
     if (ref) this.paint(ref)
+    this.refreshLabel()
     this.scene.requestRender()
     if (!ref) return null
     const ground = this.tiles.get(ref.tileKey)?.ground.get(ref.building?.id ?? '') ?? null

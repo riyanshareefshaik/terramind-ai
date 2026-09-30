@@ -145,7 +145,9 @@ export class MapScene {
       cancelAnimationFrame(this.hoverFrame)
       this.hoverFrame = requestAnimationFrame(() => {
         if (this.destroyed) return
-        scene.canvas.style.cursor = this.tiles.resolvePick(scene.pick(event.endPosition)) ? 'pointer' : ''
+        const id = this.tiles.resolvePick(scene.pick(event.endPosition))
+        scene.canvas.style.cursor = id ? 'pointer' : ''
+        this.tiles.setHover(id)
       })
     }, ScreenSpaceEventType.MOUSE_MOVE)
 

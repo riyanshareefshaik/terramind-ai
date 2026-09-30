@@ -19,8 +19,10 @@ type Tab = 'overview' | 'layers' | 'details' | 'alerts'
 
 const WEATHER_REFRESH_MS = 10 * 60 * 1000
 const HEALTH_REFRESH_MS = 30 * 1000
-/** Refresh area weather and name once the view moves this far. */
+/** Refresh area weather once the view moves this far… */
 const REFOCUS_DISTANCE_M = 2_000
+/** …and the locality name sooner, since neighbourhoods are small. */
+const RENAME_DISTANCE_M = 400
 const LAYERS_KEY = 'terramind.layers'
 
 const DEFAULT_LAYERS: LayerSettings = {
@@ -54,6 +56,7 @@ export default function App() {
   const map = useRef<MapHandle>(null)
   const [layers, setLayers] = useState<LayerSettings>(loadLayers)
   const [focus, setFocus] = useState<LatLon>({ latitude: config.home.latitude, longitude: config.home.longitude })
+  const [areaFocus, setAreaFocus] = useState<LatLon>(focus)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [tab, setTab] = useState<Tab>('overview')
 
@@ -78,16 +81,14 @@ export default function App() {
     useCallback((signal: AbortSignal) => api.alerts(focus, signal), [focus]),
     WEATHER_REFRESH_MS,
   )
-  const area = useResource(useCallback((signal: AbortSignal) => api.areaName(focus, signal), [focus]))
+  const area = useResource(useCallback((signal: AbortSignal) => api.areaName(areaFocus, signal), [areaFocus]))
 
   const handleViewChange = useCallback((view: ViewFocus) => {
     // Only follow the view at city scale; from orbit the "centre" means little.
     if (view.range > 60_000) return
-    setFocus((current) =>
-      metresBetween(current, view) > REFOCUS_DISTANCE_M
-        ? { latitude: Number(view.latitude.toFixed(4)), longitude: Number(view.longitude.toFixed(4)) }
-        : current,
-    )
+    const next = { latitude: Number(view.latitude.toFixed(4)), longitude: Number(view.longitude.toFixed(4)) }
+    setFocus((current) => (metresBetween(current, view) > REFOCUS_DISTANCE_M ? next : current))
+    setAreaFocus((current) => (metresBetween(current, view) > RENAME_DISTANCE_M ? next : current))
   }, [])
 
   const handleSelect = useCallback((next: Selection | null) => {

@@ -24,12 +24,8 @@ export function createBasemap(id: BasemapId): ImageryLayer[] {
       return [layer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', '© OpenStreetMap contributors', 19)]
     case 'dark':
       return [
-        layer(
-          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          '© OpenStreetMap contributors © CARTO',
-          20,
-          ['a', 'b', 'c', 'd'],
-        ),
+        layer(`${ESRI}/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}`, '© Esri, HERE, Garmin, © OpenStreetMap contributors', 16),
+        layer(`${ESRI}/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, '© Esri', 16),
       ]
   }
 }

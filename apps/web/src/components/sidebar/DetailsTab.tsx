@@ -11,14 +11,22 @@ interface DetailsTabProps {
 }
 
 function address(tags: Record<string, string>): string | null {
-  const line = [
-    [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(' '),
+  const parts = [
+    [tags['addr:housenumber'], tags['addr:street']].filter(Boolean).join(', '),
     tags['addr:suburb'] ?? tags['addr:place'],
     tags['addr:city'],
     tags['addr:postcode'],
   ]
-    .filter(Boolean)
-    .join(', ')
+  // OSM address fields are often partly duplicated (e.g. the street tag already
+  // contains the city and PIN); keep each piece only once.
+  let line = ''
+  for (const part of parts) {
+    if (!part) continue
+    const pieces = part.split(',').map((p) => p.trim()).filter(Boolean)
+    for (const piece of pieces) {
+      if (!line.toLowerCase().includes(piece.toLowerCase())) line = line ? `${line}, ${piece}` : piece
+    }
+  }
   return line || tags['addr:full'] || null
 }
 

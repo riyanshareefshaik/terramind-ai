@@ -2,7 +2,8 @@ import type { AqiCategory, BuildingKind, PlaceCategory } from '../types/api'
 
 /** Default building colour: a warm light concrete, close to real rooftops. */
 export const BUILDING_NATURAL = '#ddd8cf'
-export const SELECTED = '#4c8dff'
+/** Selection highlight: cyan, distinct from every building-use and height colour. */
+export const SELECTED = '#22e5ff'
 
 /** Building use — categorical slots in fixed order (validated on the dark surface). "Other" is neutral. */
 export const BUILDING_KIND_COLORS: Record<BuildingKind, string> = {
